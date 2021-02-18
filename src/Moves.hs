@@ -7,6 +7,18 @@ import Data.Tuple.Extra
 import Control.Monad
 
 data SlideType = BishopSlide | RookSlide deriving(Eq,Ord,Show)
+data Result = Win Side | Draw deriving(Eq,Ord,Show)
+
+scoreGame :: Position -> [Move] -> Maybe Result
+scoreGame pos ms = let
+  toMove = posToMove pos
+                 in if null ms
+                     then Just $ if isCheck toMove pos
+                                  then Win $ otherSide toMove
+                                  else Draw
+                     else if posHmc pos >= 100 -- It seems that because the rule is fifty moves and this counts half moves the number should be 100
+                            then Just Draw
+                            else Nothing
 
 legalMoves :: Position -> [Move]
 legalMoves pos = let

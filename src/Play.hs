@@ -9,14 +9,16 @@ import Graphics.Gloss.Interface.IO.Game
 import Control.Monad
 import Data.Maybe
 import Data.Array
+import Engines
 
 data GameState=GS{
   gspos :: Position,
   lastClick :: Maybe Space,
   promotion :: Maybe Move, -- stores promotion untill the user specifies what the pawn is being promoted to
-  gsmoves :: [Move]
+  gsmoves :: [Move],
+  gsWhite :: Maybe Engine,
+  gsBlack :: Maybe Engine
                  }
-
 
 playChess :: IO ()
 playChess = do
@@ -24,11 +26,43 @@ playChess = do
   playIO
     (InWindow "chess" (1000,1000) (500,500))
     black
-    0
-    (findMoves $ GS starting Nothing Nothing [])
+    1
+    startingGS
     (return . renderGame asset)
     eventHandler
-    (const return)
+    stepWorld
+
+startingGS :: GameState
+startingGS = findMoves $ GS{
+      gspos=starting,
+      lastClick=Nothing,
+      promotion=Nothing,
+      gsmoves=[],
+      gsWhite=Nothing,
+      gsBlack=Just randomMover
+                   }
+
+-- Plays the engine move if it is an engine's turn
+stepWorld :: Float -> GameState -> IO GameState
+stepWorld _ gs = do
+  let pos = gspos gs
+  let score = scoreGame pos (gsmoves gs)
+  case score of
+    Just res -> do
+      putStrLn $ "game over: " ++ show res
+      return startingGS
+    Nothing -> do
+      let toMove = posToMove pos
+      let maybeEng = case toMove of
+                  White -> gsWhite gs
+                  Black -> gsBlack gs
+      case maybeEng of
+        Nothing -> return gs
+        Just eng -> do
+          putStrLn "engine Moving"
+          mv <- eng pos
+          putStrLn $ "engine chose: " ++ show mv
+          return $ findMoves gs{gspos=doMove mv pos}
 
 findMoves :: GameState -> GameState
 findMoves gs = gs{gsmoves=legalMoves (gspos gs)}
@@ -49,24 +83,31 @@ eventHandler _ = return
 attemptMove :: Move -> GameState -> IO GameState
 attemptMove mv gs = do
     let pos=gspos gs
-    putStrLn $ "interpretedMove as: " ++ show mv
-    let legals = gsmoves gs
-    if mv `elem` legals
-       then do
-          putStrLn "move is legal"
-          putStrLn "playing move"
-          print $ otherSide . posToMove . gspos $ gs
-          print $ findPins pos
-          let newPos = doMove mv pos
-          return $ GS{
-            gspos=newPos,
-            lastClick=Nothing,
-            promotion=Nothing,
-            gsmoves= legalMoves newPos
-                     }
+    let toMove = posToMove pos
+    let isHumanTurn = isNothing $ case toMove of
+                                White -> gsWhite gs
+                                Black -> gsBlack gs
+    if not isHumanTurn
+        then return gs
         else do
-          putStrLn "move is not legal"
-          return $ gs{ lastClick=Nothing,promotion=Nothing }
+          putStrLn $ "interpretedMove as: " ++ show mv
+          let legals = gsmoves gs
+          if mv `elem` legals
+             then do
+                putStrLn "move is legal"
+                putStrLn "playing move"
+                print $ otherSide . posToMove . gspos $ gs
+                print $ findPins pos
+                let newPos = doMove mv pos
+                return $ gs{
+                  gspos=newPos,
+                  lastClick=Nothing,
+                  promotion=Nothing,
+                  gsmoves= legalMoves newPos
+                           }
+              else do
+                putStrLn "move is not legal"
+                return $ gs{ lastClick=Nothing,promotion=Nothing }
 
 handleClick :: Point -> GameState -> IO GameState
 handleClick pt gs@GS{promotion=Just mv} = do
