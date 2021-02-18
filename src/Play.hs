@@ -39,7 +39,7 @@ startingGS = findMoves $ GS{
       promotion=Nothing,
       gsmoves=[],
       gsWhite=Nothing,
-      gsBlack=Just randomMover
+      gsBlack=Nothing
                    }
 
 -- Plays the engine move if it is an engine's turn

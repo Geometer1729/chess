@@ -5,9 +5,20 @@ import Data.Array
 import Data.Maybe
 import Data.Tuple.Extra
 import Control.Monad
+import Data.Function
 
 data SlideType = BishopSlide | RookSlide deriving(Eq,Ord,Show)
-data Result = Win Side | Draw deriving(Eq,Ord,Show)
+data Result = Win Side | Draw deriving(Eq,Show)
+
+instance Ord Result where
+  compare = compare `on` resultToNum
+  (<=) = (<=) `on` resultToNum
+  (<)  = (<)  `on` resultToNum
+
+resultToNum :: Result -> Float
+resultToNum (Win Black) = -1
+resultToNum Draw        = 0
+resultToNum (Win White) = 1
 
 scoreGame :: Position -> [Move] -> Maybe Result
 scoreGame pos ms = let
@@ -79,7 +90,7 @@ genEnpassan pos = do
                   Move{msrc=src,mdest=dest} -> return (src,dest)
                   _ -> []
   let board = posBoard pos
-  guard $ fmap snd (board!lmsrc) == Just Pawn
+  guard $ fmap snd (board!lmdest) == Just Pawn
   let side = posToMove pos
   guard $ case otherSide side of
             White -> snd lmsrc == 2 && snd lmdest == 4

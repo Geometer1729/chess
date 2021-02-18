@@ -1,0 +1,13 @@
+
+*Better static evaluation goals
+  * Control squares
+    * ideally things like pining pieces will be encouraged as a way to prevent your opponent controlling squares
+  * Some sort of goal to get it to play simple mating strategies
+    * Want their king on the edge?
+    * Learn more about opposition and maybe make that a goal
+
+* Optimize pruning by guessing at good moves
+  * Checks
+  * Captures by cheaper piece
+  * captures by even piece
+

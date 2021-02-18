@@ -1,6 +1,6 @@
 # Chess
 
-Currently you can play chess agains an "engine" which makes a random legal move each turn.
+Currently you can play chess agains an engine which usually makes a somewhat reasonable move.
 It's likely there are bugs. If you find any please let me know.
 
 The goal of this project is to make a good chess engine.
