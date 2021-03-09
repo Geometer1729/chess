@@ -2,9 +2,14 @@ module Engines where
 
 import Board
 import Moves
-import System.Random
-import Data.Maybe
+
+import Control.Monad.State
 import Data.Array
+import Data.List
+import Data.Maybe
+import System.Random
+import Data.Ord
+import Control.Concurrent
 
 type Engine = Position -> IO Move
 -- IO is used to allow randomness file and reading
@@ -26,34 +31,87 @@ flipOrdering = compare EQ
 randomMover :: Engine
 randomMover pos = do
   let moves = legalMoves pos
-  i <- randomRIO (0,length moves -1)
-  return $ moves!!i
+  if null moves
+     then error "No legal moves but game not ended"
+     else do
+        i <- randomRIO (0,length moves -1)
+        return $ moves!!i
 
-data GameTree = Node Position [(Move,GameTree)] | Leaf Result
+data GameTree = Node{
+  gtPos   :: Position,
+  gtEval  :: Maybe Eval,
+  gtAlpha :: Eval,
+  gtBetta :: Eval,
+  gtMoves :: [(Move,GameTree)]
+    } | Leaf Result
 
 engine :: Engine
-engine pos = let
-  tree = createTree pos
-  (maybeMove,_) = alphaBeta 3 (End $ Win Black) (End $ Win White) tree
-    in case maybeMove of
-         Just move -> return move
-         Nothing -> error "alphaBeta called with either a mate or depth 0"
+engine pos = do
+  let tree = createTree pos
+  let start = (0,tree)
+  (depth,refinedTree) <- anyTime 10 deepen start
+  putStr "ran at depth of:"
+  print depth
+  return $ getMove refinedTree
+
+getMove :: GameTree -> Move
+getMove = fst . head . gtMoves
+
+anyTime :: Int -> (a -> IO a) -> a -> IO a
+anyTime time f x = do
+  mx <- newMVar x
+  threadID  <- forkIO (forever $ refine mx f)
+  threadDelay (time*1000000)
+  result <- readMVar mx
+  killThread threadID
+  return result
+
+refine :: MVar a -> (a -> IO a) -> IO ()
+refine mvar f = do
+    x <- readMVar mvar
+    x' <- f x
+    _ <- swapMVar mvar x'
+    return ()
+
+deepen :: (Int,GameTree) -> IO (Int,GameTree)
+deepen (depth,tree) = do
+  let newDepth = depth+1
+  let newTree  = evaluate newDepth tree
+  putStrLn "at depth of: "
+  print newDepth
+  putStrLn "favorite move:"
+  print $ getMove newTree
+  putStrLn "Eval is:"
+  print $ getEval newTree
+  return (newDepth,newTree)
 
 createTree :: Position -> GameTree
 createTree pos = let
   moves = legalMoves pos
   maybeRes = scoreGame pos moves
-    in case maybeRes of
-         Just res -> Leaf res
-         Nothing -> Node pos [ (move,createTree $ doMove move pos) | move <- moves ]
+  noScore = Node {
+            gtPos   = pos,
+            gtEval  = Nothing,
+            gtAlpha = End (Win Black),
+            gtBetta = End (Win White),
+            gtMoves = [ (move,createTree $ doMove move pos) | move <- moves ]
+                        }
+    in maybe noScore Leaf maybeRes
 
 staticEval :: Position -> Eval
 staticEval pos = let
+  toMove = posToMove pos
   pieces = mapMaybe snd . assocs . posBoard $ pos
-    in Score $ sum $ map scoreMaterial pieces
+  materialScore = sum $ map scorePiece pieces
+  checkPenalty = if isCheck toMove pos then (case toMove of
+                                       White -> -0.5
+                                       Black -> 0.5
+                                            )
+                                       else 0
+    in Score $ materialScore + checkPenalty
 
-scoreMaterial :: Piece -> Float
-scoreMaterial (side,pt) = let
+scorePiece :: Piece -> Float
+scorePiece (side,pt) = let
   sideMult = case side of
                Black -> -1
                White -> 1
@@ -66,49 +124,83 @@ scoreMaterial (side,pt) = let
             King -> 0
                            in sideMult*value
 
-  {-
-    alpha is worst case for white
-    beta is worst case for black
-  -}
+--- White maximizes
+--- Black minimizes
+--- alpha: white is assured at least
+--- betta: black is assured at most
 
-alphaBeta :: Int -> Eval -> Eval -> GameTree -> (Maybe Move,Eval)
-alphaBeta _ _ _ (Leaf result) = (Nothing,End result)
-alphaBeta 0 _ _ (Node pos _) = (Nothing,staticEval pos)
-alphaBeta _ _ _ (Node _ [])  = error "should be unreachable"
-alphaBeta depth alpha beta  (Node _ [(move,newTree)]) = let
-  (_,eval)   = alphaBeta (depth-1) alpha beta newTree
-       in (Just move,eval)
-alphaBeta depth alpha beta (Node pos ((move,newTree):moves)) = let
-  toMove = posToMove pos
-  (_,eval)   = alphaBeta (depth-1) alpha beta newTree
-    in case toMove of
-        White -> let
-          alpha' = max alpha eval
-            in if beta <= alpha'
-                  then (Just move,eval)
-                  else let
-                      (laterMove,laterEval) = alphaBeta depth alpha' beta (Node pos moves)
-                        in if eval >= laterEval
-                              then (Just move,eval)
-                              else (laterMove,laterEval)
+evaluate :: Int -> GameTree -> GameTree
+evaluate _     (Leaf res) = Leaf res
+evaluate 0     node@Node{gtPos=pos} = let
+  static = staticEval pos
+    in case posToMove pos of
+         White -> node{
+            gtEval=Just static,
+            gtAlpha = max (gtAlpha node) static
+                      }
+         Black -> node{
+            gtEval=Just static,
+            gtBetta = min (gtBetta node) static
+                      }
+evaluate depth gt@Node{
+  gtPos = pos,
+  gtMoves=moves,
+  gtAlpha=alpha,
+  gtBetta=betta
+                        } = let
+                        toMove = posToMove pos
+                        (moves',(alpha',betta')) = runState ( mapM ((case toMove of
+                                                                       White -> evalScanerWhite
+                                                                       Black -> evalScanerBlack
+                                                                         ) depth) moves ) (alpha,betta)
+                        sortedMoves = case toMove of
+                                        White -> sortOn (       getEval.snd) moves'
+                                        Black -> sortOn (Down . getEval.snd) moves'
+                        newEval  = getEval (snd . head $ sortedMoves)
+                        newAlpha = case toMove of
+                                     White -> alpha'
+                                     Black -> alpha
+                        newBetta = case toMove of
+                                     White -> betta
+                                     Black -> betta'
+                             in gt{
+                              gtEval =Just newEval,
+                              gtAlpha=newAlpha,
+                              gtBetta=newBetta,
+                              gtMoves=sortedMoves
+                                  }
 
-        Black -> let
-          beta' = min beta eval
-            in if beta' <= alpha
-                  then (Just move,eval)
-                  else let
-                    (laterMove,laterEval) = alphaBeta depth alpha beta' (Node pos moves)
-                      in if eval <= laterEval
-                            then (Just move,eval)
-                            else (laterMove,laterEval)
 
 
+evalScanerWhite :: Int -> (Move,GameTree) -> State (Eval,Eval) (Move,GameTree)
+evalScanerWhite _ (mv,l@(Leaf res)) = do
+  (alpha,betta) <- get
+  put (max alpha (End res),betta)
+  return (mv,l)
+evalScanerWhite depth (mv,gt@Node{}) = do
+    (alpha,betta) <- get
+    if alpha >= betta
+       then return (mv,gt{gtAlpha = max alpha (gtAlpha gt),gtEval=Just alpha})
+       else do
+          let gt' = evaluate (depth-1) gt{gtAlpha=max alpha (gtAlpha gt)}
+          put (gtAlpha gt',betta)
+          return (mv,gt')
 
+evalScanerBlack :: Int -> (Move,GameTree) -> State (Eval,Eval) (Move,GameTree)
+evalScanerBlack _ (mv,l@(Leaf res)) = do
+  (alpha,betta) <- get
+  put (alpha,min betta (End res))
+  return (mv,l)
+evalScanerBlack depth (mv,gt@Node{}) = do
+    (alpha,betta) <- get
+    if alpha >= betta
+       then return (mv,gt{gtBetta = min betta (gtBetta gt),gtEval=Just betta})
+       else do
+          let gt' = evaluate (depth-1) gt{gtBetta=min betta (gtBetta gt)}
+          put (alpha,gtBetta gt')
+          return (mv,gt')
 
-
-
-
-
-
-
-
+getEval :: GameTree -> Eval
+getEval (Leaf res) = End res
+getEval Node{gtEval=Just eval} = eval
+getEval Node{gtEval=Nothing} = error "eval not defined"
