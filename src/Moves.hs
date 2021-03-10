@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 module Moves where
 
 import Board
@@ -400,4 +401,55 @@ getKingPos White = posWhiteKing
 
 onBoard :: Space -> Bool
 onBoard = inRange ((1,1),(8,8))
+
+showMove :: Position -> [Move] -> Move -> String
+showMove pos moves mv@Move{msrc=src,mdest=dest,mtaken=taken} = let
+  board = posBoard pos
+  piece = board!src
+  pieceStr = showPiece (snd $ fromJust piece)
+  takesStr = [ 'x' | isJust taken ]
+  destStr  = showSpace dest
+  disambiguateStr = concat.catMaybes$ [disambiguate board mv mv' | mv' <- moves ]
+  checkStr = ""
+    in disambiguateStr ++ pieceStr ++ takesStr ++ destStr ++ checkStr
+showMove _ _ (Castle K) = "O-O"
+showMove _ _ (Castle Q) = "O-O-O"
+showMove pos moves mv@EnPasan{mdest=dest} = let
+  board = posBoard pos
+  disambiguateStr = concat.catMaybes$ [ disambiguate board mv mv' | mv' <- moves ]
+    in disambiguateStr ++ "x" ++ showSpace dest
+
+showMove pos moves Promotion{msrc=src,mdest=dest,mtaken=taken,becomes=b} = showMove pos moves
+    Move{msrc=src,mdest=dest,mtaken=taken} ++ showPiece b
+
+
+showPiece :: PieceType -> String
+showPiece = \case
+               Pawn   -> ""
+               Rook   -> "r"
+               Knight -> "n"
+               Bishop -> "b"
+               Queen  -> "q"
+               King   -> "k"
+
+
+
+
+disambiguate :: Board -> Move -> Move -> Maybe String
+disambiguate board Move{msrc=src1@(x1,y1),mdest=dest1} Move{msrc=src2@(x2,_),mdest=dest2} = do
+  guard $ dest1 == dest2
+  guard $ src1 /= src2
+  p1 <- board!src1
+  p2 <- board!src2
+  guard $ p1 == p2
+  return $ if x1 /= x2
+              then [showFile x1]
+              else show y1
+disambiguate _ EnPasan{msrc=(x,_)} EnPasan{} = Just [ showFile x ]
+disambiguate _ _ _ = Nothing
+-- I think castling enpasan and promotion are never ambiguous
+-- except enpasan with enpasan which is always ambiguous if two exist
+-- and is always disambiguated by file
+
+
 

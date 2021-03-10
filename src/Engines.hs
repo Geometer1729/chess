@@ -76,13 +76,16 @@ refine mvar f = do
 deepen :: (Int,GameTree) -> IO (Int,GameTree)
 deepen (depth,tree) = do
   let newDepth = depth+1
-  let newTree  = evaluate newDepth tree
+  let cleanTree = resetEval tree
+  let newTree  = evaluate newDepth cleanTree
   putStrLn "at depth of: "
   print newDepth
   putStrLn "favorite move:"
   print $ getMove newTree
   putStrLn "Eval is:"
   print $ getEval newTree
+  putStrLn "continuation is:"
+  putStrLn $ showContinuation newTree
   return (newDepth,newTree)
 
 createTree :: Position -> GameTree
@@ -154,8 +157,8 @@ evaluate depth gt@Node{
                                                                        Black -> evalScanerBlack
                                                                          ) depth) moves ) (alpha,betta)
                         sortedMoves = case toMove of
-                                        White -> sortOn (       getEval.snd) moves'
-                                        Black -> sortOn (Down . getEval.snd) moves'
+                                        White -> sortOn (Down . getEval.snd) moves'
+                                        Black -> sortOn (       getEval.snd) moves'
                         newEval  = getEval (snd . head $ sortedMoves)
                         newAlpha = case toMove of
                                      White -> alpha'
@@ -204,3 +207,32 @@ getEval :: GameTree -> Eval
 getEval (Leaf res) = End res
 getEval Node{gtEval=Just eval} = eval
 getEval Node{gtEval=Nothing} = error "eval not defined"
+
+-- remove alpha betta and eval info from previous evaluation
+resetEval :: GameTree -> GameTree
+resetEval (Leaf res) = Leaf res
+resetEval node@Node{gtMoves=moves} = node{
+  gtEval = Nothing,
+  gtAlpha = End (Win Black),
+  gtBetta = End (Win White),
+  gtMoves = [(mv,resetEval gt) | (mv,gt) <- moves ]
+    }
+
+findContinuation :: GameTree -> [String]
+findContinuation (Leaf _) = []
+findContinuation Node{gtPos=pos,gtMoves=moves@((mv,gt):_)} = showMove pos (map fst moves) mv:findContinuation gt
+findContinuation Node{gtMoves=[]} = error "game end not detected"
+
+showContinuation :: GameTree -> String
+showContinuation gt = intercalate "," . take 10 $ findContinuation gt
+
+
+
+
+
+
+
+
+
+
+

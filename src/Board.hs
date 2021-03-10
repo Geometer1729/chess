@@ -146,4 +146,8 @@ to :: Position -> Space -> Space -> Move
 to pos src dest = Move{msrc=src,mdest=dest,mtaken=posBoard pos!dest}
 
 showSpace :: Space -> String
-showSpace (x,y) = chr (96+x):show y
+showSpace (x,y) = showFile x:show y
+
+showFile :: Int -> Char
+showFile x = chr (96+x)
+
