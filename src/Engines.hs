@@ -1,3 +1,6 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE Strict #-}
+
 module Engines where
 
 import Board
@@ -12,7 +15,7 @@ import Data.Ord
 import Control.Concurrent
 
 type Engine = Position -> IO Move
--- IO is used to allow randomness file and reading
+-- IO is used to allow randomness and concurency
 
 data Eval = Score Float | End Result deriving(Eq,Show)
 -- High is good for white
@@ -78,6 +81,7 @@ deepen (depth,tree) = do
   let newDepth = depth+1
   let cleanTree = resetEval tree
   let newTree  = evaluate newDepth cleanTree
+    {-
   putStrLn "at depth of: "
   print newDepth
   putStrLn "favorite move:"
@@ -86,6 +90,9 @@ deepen (depth,tree) = do
   print $ getEval newTree
   putStrLn "continuation is:"
   putStrLn $ showContinuation newTree
+  putStr "tree:"
+  putStrLn $ showAnalysis (depth+2) newTree
+  -}
   return (newDepth,newTree)
 
 createTree :: Position -> GameTree
@@ -139,11 +146,11 @@ evaluate 0     node@Node{gtPos=pos} = let
     in case posToMove pos of
          White -> node{
             gtEval=Just static,
-            gtAlpha = max (gtAlpha node) static
+            gtAlpha = static
                       }
          Black -> node{
             gtEval=Just static,
-            gtBetta = min (gtBetta node) static
+            gtBetta = static
                       }
 evaluate depth gt@Node{
   gtPos = pos,
@@ -152,20 +159,20 @@ evaluate depth gt@Node{
   gtBetta=betta
                         } = let
                         toMove = posToMove pos
-                        (moves',(alpha',betta')) = runState ( mapM ((case toMove of
+                        (!moves',(!alpha',!betta')) = runState ( mapM ((case toMove of
                                                                        White -> evalScanerWhite
                                                                        Black -> evalScanerBlack
                                                                          ) depth) moves ) (alpha,betta)
-                        sortedMoves = case toMove of
+                        !sortedMoves = case toMove of
                                         White -> sortOn (Down . getEval.snd) moves'
                                         Black -> sortOn (       getEval.snd) moves'
-                        newEval  = getEval (snd . head $ sortedMoves)
-                        newAlpha = case toMove of
-                                     White -> alpha'
-                                     Black -> alpha
-                        newBetta = case toMove of
-                                     White -> betta
-                                     Black -> betta'
+                        !newEval  = getEval (snd . head $ sortedMoves)
+                        !newAlpha = case toMove of
+                                     White -> max newEval alpha'
+                                     Black -> alpha'
+                        !newBetta = case toMove of
+                                     White -> betta'
+                                     Black -> min newEval betta'
                              in gt{
                               gtEval =Just newEval,
                               gtAlpha=newAlpha,
@@ -183,9 +190,9 @@ evalScanerWhite _ (mv,l@(Leaf res)) = do
 evalScanerWhite depth (mv,gt@Node{}) = do
     (alpha,betta) <- get
     if alpha >= betta
-       then return (mv,gt{gtAlpha = max alpha (gtAlpha gt),gtEval=Just alpha})
+       then return (mv,gt{gtAlpha = max alpha (gtAlpha gt),gtEval=Just betta})
        else do
-          let gt' = evaluate (depth-1) gt{gtAlpha=max alpha (gtAlpha gt)}
+          let !gt' = evaluate (depth-1) gt{gtAlpha=max alpha (gtAlpha gt),gtBetta=min betta (gtBetta gt)}
           put (gtAlpha gt',betta)
           return (mv,gt')
 
@@ -197,9 +204,9 @@ evalScanerBlack _ (mv,l@(Leaf res)) = do
 evalScanerBlack depth (mv,gt@Node{}) = do
     (alpha,betta) <- get
     if alpha >= betta
-       then return (mv,gt{gtBetta = min betta (gtBetta gt),gtEval=Just betta})
+       then return (mv,gt{gtAlpha = max alpha (gtAlpha gt),gtBetta = min betta (gtBetta gt),gtEval=Just alpha})
        else do
-          let gt' = evaluate (depth-1) gt{gtBetta=min betta (gtBetta gt)}
+          let !gt' = evaluate (depth-1) gt{gtBetta=min betta (gtBetta gt)}
           put (alpha,gtBetta gt')
           return (mv,gt')
 
@@ -226,7 +233,22 @@ findContinuation Node{gtMoves=[]} = error "game end not detected"
 showContinuation :: GameTree -> String
 showContinuation gt = intercalate "," . take 10 $ findContinuation gt
 
+showAnalysis :: Int -> GameTree -> String
+showAnalysis _ (Leaf res) = show res
+showAnalysis 0 _ = ""
+showAnalysis depth Node{
+  gtEval=eval,
+  gtPos=pos,
+  gtAlpha=alpha,
+  gtBetta=betta,
+  gtMoves=moves
+        } = " eval:" ++ show eval ++ "/" ++ show alpha ++ "/" ++ show betta ++ "\n"
+            ++ unlines [ showMove pos (map fst moves) mv ++ indent (showAnalysis (depth -1) gt)
+              | depth > 1 , (mv,gt) <- take 2 moves ]
 
+
+indent :: String -> String
+indent = intercalate "\n    " . lines
 
 
 
